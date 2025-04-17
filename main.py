@@ -32,6 +32,10 @@ def cmdlist():
     print("Enable/disable output in a '<target username>_<command>.txt' file'")
     pc.printout("JSON=y/n\t")
     print("Enable/disable export in a '<target username>_<command>.json' file'")
+    pc.printout("setup\t\t")
+    print("Setup Instagram accounts and switch delay")
+    pc.printout("accounts\t")
+    print("Show current account status and switch accounts")
     pc.printout("addrs\t\t")
     print("Get all registered addressed by target photos")
     pc.printout("cache\t\t")
@@ -127,6 +131,8 @@ commands = {
     'help':             cmdlist,
     'quit':             _quit,
     'exit':             _quit,
+    'setup':            api.setup_accounts,
+    'accounts':         api.show_account_status,
     'addrs':            api.get_addrs,
     'cache':            api.clear_cache,
     'captions':         api.get_captions,

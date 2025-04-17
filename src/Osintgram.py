@@ -4,7 +4,10 @@ import sys
 import urllib
 import os
 import codecs
+import time
+import random
 from pathlib import Path
+from typing import List, Tuple, Optional
 
 import requests
 import ssl
@@ -19,6 +22,45 @@ from prettytable import PrettyTable
 from src import printcolors as pc
 from src import config
 
+class AccountManager:
+    def __init__(self):
+        self.accounts = config.get_accounts()
+        self.settings = config.get_settings()
+        self.current_account_index = 0
+        self.rate_limited_accounts = set()
+        self.last_switch_time = 0
+        
+    def get_next_account(self) -> Optional[Tuple[str, str]]:
+        """Get the next available account, considering rate limits and switch delay."""
+        current_time = time.time()
+        
+        # Check if we need to wait before switching
+        if current_time - self.last_switch_time < self.settings["switch_delay"]:
+            return None
+            
+        # Try to find an account that's not rate limited
+        for _ in range(len(self.accounts)):
+            if self.current_account_index not in self.rate_limited_accounts:
+                account = self.accounts[self.current_account_index]
+                self.current_account_index = (self.current_account_index + 1) % len(self.accounts)
+                self.last_switch_time = current_time
+                return account
+            self.current_account_index = (self.current_account_index + 1) % len(self.accounts)
+            
+        # If all accounts are rate limited, clear the rate limited set and try again
+        if len(self.rate_limited_accounts) == len(self.accounts):
+            self.rate_limited_accounts.clear()
+            return self.get_next_account()
+            
+        return None
+        
+    def mark_account_rate_limited(self, account_index: int):
+        """Mark an account as rate limited."""
+        self.rate_limited_accounts.add(account_index)
+        
+    def get_current_account_index(self) -> int:
+        """Get the current account index."""
+        return (self.current_account_index - 1) % len(self.accounts)
 
 class Osintgram:
     api = None
@@ -33,20 +75,43 @@ class Osintgram:
     jsonDump = False
     cli_mode = False
     output_dir = "output"
-
+    account_manager = None
 
     def __init__(self, target, is_file, is_json, is_cli, output_dir, clear_cookies):
         self.output_dir = output_dir or self.output_dir        
-        u = config.getUsername()
-        p = config.getPassword()
+        self.account_manager = AccountManager()
         self.clear_cookies(clear_cookies)
         self.cli_mode = is_cli
         if not is_cli:
-          print("\nAttempt to login...")
-        self.login(u, p)
+            print("\nAttempt to login...")
+        self.login_with_account_switching()
         self.setTarget(target)
         self.writeFile = is_file
         self.jsonDump = is_json
+
+    def login_with_account_switching(self):
+        """Attempt to login with account switching on failure."""
+        while True:
+            account = self.account_manager.get_next_account()
+            if not account:
+                pc.printout("All accounts are rate limited. Waiting before retrying...\n", pc.YELLOW)
+                time.sleep(self.account_manager.settings["switch_delay"])
+                continue
+                
+            try:
+                self.login(account[0], account[1])
+                break
+            except (ClientError, ClientLoginRequiredError) as e:
+                pc.printout(f"Login failed for account {account[0]}: {str(e)}\n", pc.RED)
+                self.account_manager.mark_account_rate_limited(self.account_manager.get_current_account_index())
+                continue
+
+    def handle_rate_limit(self):
+        """Handle rate limiting by switching accounts."""
+        current_account_index = self.account_manager.get_current_account_index()
+        self.account_manager.mark_account_rate_limited(current_account_index)
+        pc.printout(f"Account {self.api.username} rate limited. Switching accounts...\n", pc.YELLOW)
+        self.login_with_account_switching()
 
     def clear_cookies(self,clear_cookies):
         if clear_cookies:
@@ -64,31 +129,51 @@ class Osintgram:
 
     def __get_feed__(self):
         data = []
+        max_retries = 3
+        retry_count = 0
 
-        result = self.api.user_feed(str(self.target_id))
-        data.extend(result.get('items', []))
+        while retry_count < max_retries:
+            try:
+                result = self.api.user_feed(str(self.target_id))
+                data.extend(result.get('items', []))
 
-        next_max_id = result.get('next_max_id')
-        while next_max_id:
-            results = self.api.user_feed(str(self.target_id), max_id=next_max_id)
-            data.extend(results.get('items', []))
-            next_max_id = results.get('next_max_id')
+                next_max_id = result.get('next_max_id')
+                while next_max_id:
+                    results = self.api.user_feed(str(self.target_id), max_id=next_max_id)
+                    data.extend(results.get('items', []))
+                    next_max_id = results.get('next_max_id')
 
-        return data
+                return data
+            except (ClientError, ClientThrottledError) as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    self.handle_rate_limit()
+                else:
+                    raise e
 
     def __get_comments__(self, media_id):
         comments = []
+        max_retries = 3
+        retry_count = 0
 
-        result = self.api.media_comments(str(media_id))
-        comments.extend(result.get('comments', []))
+        while retry_count < max_retries:
+            try:
+                result = self.api.media_comments(str(media_id))
+                comments.extend(result.get('comments', []))
 
-        next_max_id = result.get('next_max_id')
-        while next_max_id:
-            results = self.api.media_comments(str(media_id), max_id=next_max_id)
-            comments.extend(results.get('comments', []))
-            next_max_id = results.get('next_max_id')
+                next_max_id = result.get('next_max_id')
+                while next_max_id:
+                    results = self.api.media_comments(str(media_id), max_id=next_max_id)
+                    comments.extend(results.get('comments', []))
+                    next_max_id = results.get('next_max_id')
 
-        return comments
+                return comments
+            except (ClientError, ClientThrottledError) as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    self.handle_rate_limit()
+                else:
+                    raise e
 
     def __printTargetBanner__(self):
         pc.printout("\nLogged as ", pc.GREEN)
@@ -1156,8 +1241,13 @@ class Osintgram:
     def check_following(self):
         if str(self.target_id) == self.api.authenticated_user_id:
             return True
-        endpoint = 'users/{user_id!s}/full_detail_info/'.format(**{'user_id': self.target_id})
-        return self.api._call_api(endpoint)['user_detail']['user']['friendship_status']['following']
+        try:
+            # Try to get user info directly
+            user_info = self.api.user_info(self.target_id)
+            return user_info['user']['friendship_status']['following']
+        except Exception as e:
+            print(f"Error checking following status: {str(e)}")
+            return False
 
     def check_private_profile(self):
         if self.is_private and not self.following:
@@ -1664,3 +1754,103 @@ class Osintgram:
             pc.printout("Settings.json don't exist.\n",pc.RED)
         finally:
             f.close()
+
+    def show_account_status(self):
+        """Show current account status and allow manual account switching."""
+        t = PrettyTable()
+        t.field_names = ['Index', 'Username', 'Status']
+        t.align["Index"] = "l"
+        t.align["Username"] = "l"
+        t.align["Status"] = "l"
+
+        for i, (username, _) in enumerate(self.account_manager.accounts):
+            status = "Rate Limited" if i in self.account_manager.rate_limited_accounts else "Active"
+            if i == self.account_manager.get_current_account_index():
+                status = "Current Account"
+            t.add_row([str(i), username, status])
+
+        print("\nAccount Status:")
+        print(t)
+        
+        pc.printout("\nCurrent account: ", pc.GREEN)
+        pc.printout(self.api.username + "\n", pc.CYAN)
+        
+        pc.printout("\nDo you want to switch accounts? (y/n): ", pc.YELLOW)
+        if input().lower() == 'y':
+            self.login_with_account_switching()
+            pc.printout(f"\nSwitched to account: {self.api.username}\n", pc.GREEN)
+
+    def setup_accounts(self):
+        """Interactive setup for Instagram accounts and switch delay."""
+        pc.printout("\nInstagram Account Setup\n", pc.YELLOW)
+        pc.printout("=====================\n", pc.YELLOW)
+        
+        # Get number of accounts
+        while True:
+            try:
+                pc.printout("How many Instagram accounts do you want to add? (1-10): ", pc.YELLOW)
+                num_accounts = int(input())
+                if 1 <= num_accounts <= 10:
+                    break
+                else:
+                    pc.printout("Please enter a number between 1 and 10\n", pc.RED)
+            except ValueError:
+                pc.printout("Please enter a valid number\n", pc.RED)
+        
+        # Get switch delay
+        while True:
+            try:
+                pc.printout("Enter switch delay in seconds (recommended: 60): ", pc.YELLOW)
+                switch_delay = int(input())
+                if switch_delay > 0:
+                    break
+                else:
+                    pc.printout("Please enter a positive number\n", pc.RED)
+            except ValueError:
+                pc.printout("Please enter a valid number\n", pc.RED)
+        
+        # Get account credentials
+        accounts = {}
+        for i in range(1, num_accounts + 1):
+            pc.printout(f"\nAccount {i}:\n", pc.CYAN)
+            
+            while True:
+                pc.printout("Username: ", pc.YELLOW)
+                username = input().strip()
+                if username:
+                    break
+                pc.printout("Username cannot be empty\n", pc.RED)
+            
+            while True:
+                pc.printout("Password: ", pc.YELLOW)
+                password = input().strip()
+                if password:
+                    break
+                pc.printout("Password cannot be empty\n", pc.RED)
+            
+            accounts[f"account{i}"] = f"{username}:{password}"
+        
+        # Write to credentials.ini
+        try:
+            with open("config/credentials.ini", "w") as f:
+                f.write("[Accounts]\n")
+                f.write("# Add your Instagram accounts below\n")
+                f.write("# Format: account_name = username:password\n")
+                f.write("# You can add as many accounts as you want\n")
+                for account_name, credentials in accounts.items():
+                    f.write(f"{account_name} = {credentials}\n")
+                
+                f.write("\n[Settings]\n")
+                f.write("# Maximum number of accounts to use simultaneously\n")
+                f.write(f"max_accounts = {num_accounts}\n")
+                f.write("# Time to wait before switching accounts (in seconds)\n")
+                f.write(f"switch_delay = {switch_delay}\n")
+            
+            pc.printout("\nConfiguration saved successfully!\n", pc.GREEN)
+            pc.printout("You can now use the 'accounts' command to view and manage your accounts.\n", pc.GREEN)
+            
+            # Reload account manager with new settings
+            self.account_manager = AccountManager()
+            
+        except Exception as e:
+            pc.printout(f"\nError saving configuration: {str(e)}\n", pc.RED)
