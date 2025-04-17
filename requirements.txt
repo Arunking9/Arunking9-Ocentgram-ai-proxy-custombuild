@@ -2,10 +2,20 @@ certifi==2025.1.31
 chardet==3.0.4
 geographiclib==2.0
 geopy==2.4.1
+<<<<<<< HEAD
 pyreadline==2.1
+=======
+gnureadline==8.2.13
+>>>>>>> 5473b8d (Secon commit)
 idna==2.10
 instagram-private-api==1.6.0.0
 prettytable==0.7.2
 requests==2.24.0
 requests-toolbelt==0.9.1
 urllib3==1.25.11
+<<<<<<< HEAD
+=======
+openai==1.12.0
+PySocks==1.7.1
+requests[socks]==2.24.0
+>>>>>>> 5473b8d (Secon commit)
