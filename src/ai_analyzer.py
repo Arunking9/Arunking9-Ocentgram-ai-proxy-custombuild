@@ -6,26 +6,35 @@ from .print_color import print_color
 
 class AIAnalyzer:
     def __init__(self):
-        self.config = configparser.ConfigParser()
-        self.config_path = os.path.join('config', 'ai_config.ini')
-        self.client = None
-        self.enabled = False
-        self.model = None
-        self.max_tokens = None
-        
-        if os.path.exists(self.config_path):
-            self.config.read(self.config_path)
-            self.enabled = self.config.getboolean('AI', 'enabled', fallback=False)
-            if self.enabled:
-                api_key = self.config.get('AI', 'api_key', fallback='')
-                self.model = self.config.get('AI', 'model', fallback='gpt-3.5-turbo')
-                self.max_tokens = self.config.getint('AI', 'max_tokens', fallback=500)
-                if api_key:
+        try:
+            self.config = configparser.ConfigParser()
+            self.config_path = os.path.join('config', 'ai_config.ini')
+            self.client = None
+            self.enabled = False
+            self.model = None
+            self.max_tokens = None
+            
+            if os.path.exists(self.config_path):
+                self.config.read(self.config_path)
+                self.enabled = self.config.getboolean('AI', 'enabled', fallback=False)
+                if self.enabled:
+                    api_key = self.config.get('AI', 'api_key', fallback='')
+                    if not api_key:
+                        print_color("Warning: OpenAI API key not found in config", "yellow")
+                        return
+                        
+                    self.model = self.config.get('AI', 'model', fallback='gpt-3.5-turbo')
+                    self.max_tokens = self.config.getint('AI', 'max_tokens', fallback=500)
                     self.client = OpenAI(api_key=api_key)
+                    print_color("AI analyzer initialized successfully", "green")
+        except Exception as e:
+            print_color(f"Error initializing AI analyzer: {str(e)}", "red")
+            self.enabled = False
     
     def _get_analysis(self, prompt, data):
         """Get AI analysis for given prompt and data"""
         if not self.enabled or not self.client:
+            print_color("AI analysis is not enabled or client not initialized", "yellow")
             return None
             
         try:
@@ -45,6 +54,7 @@ class AIAnalyzer:
     def analyze_followers(self, followers):
         """Analyze followers data"""
         if not followers:
+            print_color("No followers data provided for analysis", "yellow")
             return None
         prompt = "Analyze these Instagram followers and provide insights about their demographics, engagement patterns, and potential fake accounts."
         return self._get_analysis(prompt, str(followers))
@@ -52,6 +62,7 @@ class AIAnalyzer:
     def analyze_posts(self, posts):
         """Analyze posts data"""
         if not posts:
+            print_color("No posts data provided for analysis", "yellow")
             return None
         prompt = "Analyze these Instagram posts and provide insights about content strategy, engagement patterns, and post timing."
         return self._get_analysis(prompt, str(posts))
@@ -59,6 +70,7 @@ class AIAnalyzer:
     def analyze_hashtags(self, hashtags):
         """Analyze hashtags data"""
         if not hashtags:
+            print_color("No hashtags data provided for analysis", "yellow")
             return None
         prompt = "Analyze these Instagram hashtags and provide insights about their relevance, popularity, and potential reach."
         return self._get_analysis(prompt, str(hashtags))
@@ -66,6 +78,7 @@ class AIAnalyzer:
     def get_profile_summary(self, profile_data):
         """Generate profile summary"""
         if not profile_data:
+            print_color("No profile data provided for analysis", "yellow")
             return None
         prompt = "Generate a comprehensive summary of this Instagram profile, including key metrics, content themes, and growth patterns."
         return self._get_analysis(prompt, str(profile_data))
@@ -73,6 +86,7 @@ class AIAnalyzer:
     def analyze_sentiment(self, text_data, data_type="captions"):
         """Analyze sentiment of text data"""
         if not text_data:
+            print_color(f"No {data_type} data provided for analysis", "yellow")
             return None
         prompt = f"Analyze the sentiment of these Instagram {data_type} and provide insights about emotional tone and engagement patterns."
         return self._get_analysis(prompt, str(text_data))
@@ -80,6 +94,7 @@ class AIAnalyzer:
     def categorize_hashtags(self, hashtags):
         """Categorize hashtags"""
         if not hashtags:
+            print_color("No hashtags data provided for categorization", "yellow")
             return None
         prompt = "Categorize these Instagram hashtags into relevant groups and explain their strategic value."
         return self._get_analysis(prompt, str(hashtags))
@@ -87,6 +102,7 @@ class AIAnalyzer:
     def correlate_timeline(self, timeline_data):
         """Correlate timeline events"""
         if not timeline_data:
+            print_color("No timeline data provided for analysis", "yellow")
             return None
         prompt = "Analyze this Instagram timeline data and identify patterns, correlations, and significant events."
         return self._get_analysis(prompt, str(timeline_data))
@@ -94,6 +110,7 @@ class AIAnalyzer:
     def generate_report(self, all_data):
         """Generate comprehensive report"""
         if not all_data:
+            print_color("No data provided for report generation", "yellow")
             return None
         prompt = "Generate a comprehensive Instagram analysis report covering profile performance, content strategy, audience insights, and growth recommendations."
         return self._get_analysis(prompt, str(all_data)) 

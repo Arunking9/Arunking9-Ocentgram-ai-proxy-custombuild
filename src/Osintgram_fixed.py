@@ -1,3 +1,132 @@
+import datetime
+import json
+import sys
+import urllib
+import os
+import codecs
+from pathlib import Path
+import time
+import configparser
+import requests
+import ssl
+import re
+ssl._create_default_https_context = ssl._create_unverified_context
+
+from geopy.geocoders import Nominatim
+from instagrapi import Client
+from instagrapi.exceptions import (
+    LoginRequired,
+    ClientError,
+    ClientLoginRequired,
+    ClientThrottledError
+)
+
+from prettytable import PrettyTable
+
+from src import printcolors as pc
+from src.print_color import print_color
+from src import config
+from src.ai_analyzer import AIAnalyzer
+from src.target_prioritizer import TargetPrioritizer
+from src.ip_rotator import IPRotator
+
+
+class Osintgram:
+    api = None
+    api2 = None
+    geolocator = Nominatim(user_agent="http")
+    user_id = None
+    target_id = None
+    is_private = True
+    following = False
+    target = ""
+    writeFile = False
+    jsonDump = False
+    cli_mode = False
+    output_dir = "output"
+    current_account = None
+    retry_count = 0
+    MAX_RETRIES = 3
+    target_prioritizer = None
+    targets_data = {}  # Store data for multiple targets
+    ip_rotator = IPRotator()
+    proxy = None
+    ai_analyzer = None  # Add AI analyzer attribute
+
+    def __init__(self, target, is_file, is_json, is_cli, output_dir, clear_cookies):
+        try:
+            self.target = target
+            self.writeFile = is_file
+            self.jsonDump = is_json
+            self.cli_mode = is_cli
+            self.output_dir = output_dir
+            self.retry_count = 0
+            self.MAX_RETRIES = 3
+            self.target_prioritizer = None
+            self.targets_data = {}
+            self.ip_rotator = IPRotator()
+            self.proxy = None
+            self.ai_analyzer = None
+
+            # Create output directory if it doesn't exist
+            os.makedirs(self.output_dir, exist_ok=True)
+
+            # Load proxy configuration
+            self._load_proxy_config()
+
+            # Clear cookies if requested
+            if clear_cookies:
+                self.clear_cookies(clear_cookies)
+
+            # Attempt login
+            if not self.login_with_retry():
+                raise Exception("Failed to login to Instagram")
+
+            # Initialize AI analyzer
+            self.ai_analyzer = AIAnalyzer()
+            
+            # Load AI configuration
+            self._load_ai_config()
+
+            print_color("Osintgram initialized successfully", "green")
+        except Exception as e:
+            print_color(f"Error initializing Osintgram: {str(e)}", "red")
+            raise
+
+    def setTarget(self, target):
+        """
+        Set the target user and initialize necessary data
+        """
+        try:
+            self.target = target
+            if not target:
+                print_color("Target username cannot be empty", "red")
+                return False
+                
+            # First get user info by username
+            user = self.api.user_info_by_username(target)
+            if not user:
+                print_color(f"Could not find user {target}", "red")
+                return False
+                
+            self.target_id = user.pk
+            self.is_private = user.is_private
+            self.following = self.check_following(user)
+            
+            # Create output directory
+            if not self.output_dir:
+                self.output_dir = "output"
+            output_path = os.path.join(self.output_dir, str(self.target))
+            os.makedirs(output_path, exist_ok=True)
+            
+            # Print target banner
+            self.__printTargetBanner__(user)
+            return True
+            
+        except Exception as e:
+            print_color(f"Error setting target: {str(e)}", "red")
+            return False
+
     def get_user_photo(self):
         if self.check_private_profile():
             return
@@ -93,12 +222,14 @@
             return
 
     def get_fwingsnumber(self):
+        """Get phone numbers of users followed by target"""
         if self.check_private_profile():
             return
-
+       
         print_color("Searching for phone numbers of users followed by target...\n", "yellow")
 
         try:
+            # Get user's followings
             followings = self.api.user_following(self.target_id)
             if not followings:
                 print_color("No followings found\n", "red")
@@ -114,6 +245,7 @@
                 sys.stdout.flush()
 
                 try:
+                    # Get detailed user info which includes contact info
                     user_detail = self.api.user_info(user_id)
                     if user_detail.contact_phone_number:
                         results.append({
@@ -124,7 +256,7 @@
                         })
                 except Exception as e:
                     continue
-
+        
             print("\n")
 
             if results:
@@ -151,6 +283,5 @@
                         json.dump(json_data, f)
             else:
                 print_color("No phone numbers found\n", "red")
-
         except Exception as e:
             print_color(f"Error getting phone numbers: {str(e)}\n", "red") 

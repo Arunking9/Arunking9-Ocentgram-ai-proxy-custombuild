@@ -1,50 +1,3 @@
-<<<<<<< HEAD
-SHELL := /bin/bash
-
-setup:
-
-	@echo -e "\e[34m####### Setup for Osintgram #######\e[0m"
-	@[ -d config ] || mkdir config || exit 1
-	@echo -n "{}" > config/settings.json
-	
-	# Get number of accounts
-	@read -p "How many Instagram accounts do you want to add? (1-10): " num_accounts; \
-	if ! [[ "$$num_accounts" =~ ^[1-9]$|^10$ ]]; then \
-		echo -e "\e[31mPlease enter a number between 1 and 10\e[0m"; \
-		exit 1; \
-	fi
-	
-	# Get switch delay
-	@read -p "Enter switch delay in seconds (recommended: 60): " switch_delay; \
-	if ! [[ "$$switch_delay" =~ ^[0-9]+$ ]] || [ "$$switch_delay" -le 0 ]; then \
-		echo -e "\e[31mPlease enter a positive number\e[0m"; \
-		exit 1; \
-	fi
-	
-	# Create credentials.ini with header
-	@echo -e "[Accounts]\n# Add your Instagram accounts below\n# Format: account_name = username:password\n# You can add as many accounts as you want" > config/credentials.ini
-	
-	# Get account credentials
-	@for i in $$(seq 1 $$num_accounts); do \
-		echo -e "\n\e[36mAccount $$i:\e[0m"; \
-		read -p "Username: " username; \
-		read -sp "Password: " password; \
-		echo ""; \
-		if [ -z "$$username" ] || [ -z "$$password" ]; then \
-			echo -e "\e[31mUsername and password cannot be empty\e[0m"; \
-			exit 1; \
-		fi; \
-		echo "account$$i = $$username:$$password" >> config/credentials.ini; \
-	done
-	
-	# Add settings section
-	@echo -e "\n[Settings]\n# Maximum number of accounts to use simultaneously\nmax_accounts = $$num_accounts\n# Time to wait before switching accounts (in seconds)\nswitch_delay = $$switch_delay" >> config/credentials.ini
-	
-	@echo -e "\n\e[32mSetup Successful - config/credentials.ini created with $$num_accounts account(s)\e[0m"
-
-run:
-
-=======
 .PHONY: setup clean install
 
 setup:
@@ -62,7 +15,7 @@ setup:
 					echo "$$count. $$username"; \
 					count=$$((count + 1)); \
 				fi; \
-			done | grep '^[0-9]' | sort -u; \
+			done | sort -u; \
 		fi; \
 	else \
 		echo "You don't have any accounts added. Please add one."; \
@@ -71,8 +24,9 @@ setup:
 	@echo "1. Add new accounts"
 	@echo "2. Replace existing accounts"
 	@echo "3. Add more accounts to existing ones"
-	@echo "4. Exit"
-	@read -p "Enter your choice (1-4): " choice; \
+	@echo "4. Add OpenAI API Key"
+	@echo "5. Exit"
+	@read -p "Enter your choice (1-5): " choice; \
 	case "$$choice" in \
 		1|3) \
 			read -p "How many accounts do you want to add? (1-10): " num_accounts; \
@@ -90,25 +44,31 @@ setup:
 					echo "No accounts found to replace."; \
 				else \
 					valid_count=0; \
+					> /tmp/accounts.tmp; \
 					for acc in $$accounts; do \
 						username=$$(grep -A1 "$$acc" config/credentials.ini | grep "username" | cut -d'=' -f2 | tr -d ' '); \
-						if [ -n "$$username" ]; then \
+						if [ -n "$$username" ] && ! grep -q "$$username" /tmp/accounts.tmp; then \
 							valid_count=$$((valid_count + 1)); \
-							echo "$$valid_count. $$username"; \
+							echo "$$valid_count. $$username" >> /tmp/accounts.tmp; \
 						fi; \
-					done | grep '^[0-9]' | sort -u > /tmp/accounts.tmp; \
-					cat /tmp/accounts.tmp; \
-					read -p "Enter account number to replace (1-$$valid_count): " acc_num; \
-					if [ "$$acc_num" -ge 1 ] && [ "$$acc_num" -le $$valid_count ]; then \
-						acc_to_replace=$$(echo "$$accounts" | sed -n "$$acc_num p"); \
-						acc_num=$$(echo "$$acc_to_replace" | sed 's/account//'); \
-						if [ -n "$$acc_num" ]; then \
-							python3 setup_accounts.py --replace $$acc_num; \
+					done; \
+					if [ $$valid_count -gt 0 ]; then \
+						cat /tmp/accounts.tmp; \
+						read -p "Enter account number to replace (1-$$valid_count): " acc_num; \
+						if [ "$$acc_num" -ge 1 ] && [ "$$acc_num" -le $$valid_count ]; then \
+							acc_to_replace=$$(sed -n "$$acc_num p" /tmp/accounts.tmp | cut -d' ' -f2); \
+							acc_section=$$(grep -B1 "username = $$acc_to_replace" config/credentials.ini | head -n1 | cut -d'[' -f2 | cut -d']' -f1); \
+							acc_num=$$(echo "$$acc_section" | sed 's/account//'); \
+							if [ -n "$$acc_num" ]; then \
+								python3 setup_accounts.py --replace $$acc_num; \
+							else \
+								echo "Error: Could not determine account number."; \
+							fi; \
 						else \
-							echo "Error: Could not determine account number."; \
+							echo "Invalid account number. Please try again."; \
 						fi; \
 					else \
-						echo "Invalid account number. Please try again."; \
+						echo "No valid accounts found to replace."; \
 					fi; \
 					rm -f /tmp/accounts.tmp; \
 				fi; \
@@ -117,6 +77,21 @@ setup:
 			fi; \
 			;; \
 		4) \
+			mkdir -p config; \
+			read -p "Enter your OpenAI API Key: " api_key; \
+			if [ -f config/ai_config.ini ]; then \
+				sed -i "s/^api_key = .*/api_key = $$api_key/" config/ai_config.ini; \
+				sed -i "s/^enabled = .*/enabled = true/" config/ai_config.ini; \
+			else \
+				echo "[OpenAI]" > config/ai_config.ini; \
+				echo "enabled = true" >> config/ai_config.ini; \
+				echo "api_key = $$api_key" >> config/ai_config.ini; \
+				echo "model = gpt-3.5-turbo" >> config/ai_config.ini; \
+				echo "max_tokens = 100" >> config/ai_config.ini; \
+			fi; \
+			echo -e "\e[32mAPI Key configured successfully!\e[0m"; \
+			;; \
+		5) \
 			echo "Setup cancelled."; \
 			;; \
 		*) \
@@ -137,7 +112,6 @@ install:
 	@echo "Done!"
 
 run:
->>>>>>> 5473b8d (Secon commit)
 	@echo -e "\e[34m######## Building and Running Osintgram with Docker-compose ########\e[0m"
 	@[ -d config ] || { echo -e "\e[31mConfig folder not found! Please run 'make setup' before running this command.\e[0m"; exit 1; }
 	@echo -e "\e[34m[#] Killing old docker processes\e[0m"
@@ -148,10 +122,6 @@ run:
 	docker-compose run --rm osintgram $$username
 
 build-run-testing:
-<<<<<<< HEAD
-
-=======
->>>>>>> 5473b8d (Secon commit)
 	@echo -e "\e[34m######## Building and Running Osintgram with Docker-compose for Testing/Debugging ########\e[0m"
 	@[ -d config ] || { echo -e "\e[31mConfig folder not found! Please run 'make setup' before running this command.\e[0m"; exit 1; }
 	@echo -e "\e[34m[#] Killing old docker processes\e[0m"

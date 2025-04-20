@@ -164,6 +164,7 @@ def main():
     artwork.print_banner()
     pc.printout("Select a target Instagram account.\n", pc.YELLOW)
 
+    # Get target account
     while True:
         pc.printout("target:", pc.YELLOW)
         target = input().strip()
@@ -175,10 +176,12 @@ def main():
         if api.setTarget(target):
             break
 
+    # Execute command if provided
     if args.command:
         api.executeCommand(args.command)
         sys.exit(0)
 
+    # Main command loop
     while True:
         pc.printout("\nOsintgram > ", pc.YELLOW)
         cmd = input().strip()
