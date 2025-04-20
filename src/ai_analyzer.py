@@ -1,6 +1,7 @@
 import os
 import configparser
 from openai import OpenAI
+from src import printcolors as pc
 from .print_color import print_color
 
 class AIAnalyzer:

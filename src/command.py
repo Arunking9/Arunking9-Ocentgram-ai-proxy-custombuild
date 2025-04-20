@@ -1,4 +1,5 @@
 import time
+from src import printcolors as pc
 
 class Command:
     def __init__(self, osintgram):
